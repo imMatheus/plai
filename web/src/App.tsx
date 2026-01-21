@@ -1,9 +1,10 @@
-
+import { ExampleCounter } from './ExampleCounter'
 
 function App() {
-
   return (
-    <div className="text-3xl bg-red-500 font-bold underline">Hello, World!</div>
+    <div className="text-3xl font-bold underline">
+      <ExampleCounter />
+    </div>
   )
 }
 
