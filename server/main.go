@@ -36,11 +36,12 @@ type Client struct {
 }
 
 type Message struct {
-	Type string `json:"type"`
-	FEN  string `json:"fen"`
-	Move string `json:"move,omitempty"`
-	Turn string `json:"turn"`
-	SVG  string `json:"svg"`
+	Type        string `json:"type"`
+	FEN         string `json:"fen"`
+	Move        string `json:"move,omitempty"`
+	Turn        string `json:"turn"`
+	SVG         string `json:"svg"`
+	ViewerCount int    `json:"viewerCount"`
 }
 
 func newHub() *Hub {
@@ -65,11 +66,13 @@ func (h *Hub) run() {
 				turn = "black"
 			}
 			svg := h.generateSVG()
+			viewerCount := len(h.clients)
 			client.send <- Message{
-				Type: "game_state",
-				FEN:  h.currentGame.FEN(),
-				Turn: turn,
-				SVG:  svg,
+				Type:        "game_state",
+				FEN:         h.currentGame.FEN(),
+				Turn:        turn,
+				SVG:         svg,
+				ViewerCount: viewerCount,
 			}
 			h.mu.RUnlock()
 		case client := <-h.unregister:
@@ -139,18 +142,21 @@ func (h *Hub) playMove() {
 
 	// Broadcast move to all clients
 	h.broadcast <- Message{
-		Type: "move",
-		FEN:  h.currentGame.FEN(),
-		Move: move.String(),
-		Turn: turn,
-		SVG:  svg,
+		Type:        "move",
+		FEN:         h.currentGame.FEN(),
+		Move:        move.String(),
+		Turn:        turn,
+		SVG:         svg,
+		ViewerCount: len(h.clients),
 	}
 
 	log.Printf("Move played: %s, New FEN: %s, Next turn: %s", move.String(), h.currentGame.FEN(), turn)
 }
 
+const MOVE_INTERVAL = 5_000 * time.Millisecond // 2 seconds
+
 func (h *Hub) gameLoop() {
-	ticker := time.NewTicker(400 * time.Millisecond)
+	ticker := time.NewTicker(MOVE_INTERVAL)
 	defer ticker.Stop()
 
 	for range ticker.C {

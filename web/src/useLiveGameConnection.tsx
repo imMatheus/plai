@@ -6,6 +6,7 @@ type GameMessage = {
     move?: string
     turn: "white" | "black"
     svg: string
+    viewerCount: number
 }
 
 export function useLiveGameConnection() {
@@ -14,6 +15,7 @@ export function useLiveGameConnection() {
     const [turn, setTurn] = useState<"white" | "black">("white")
     const [svg, setSvg] = useState<string>("")
     const [isConnected, setIsConnected] = useState(false)
+    const [viewerCount, setViewerCount] = useState<number>(0)
     const ws = useRef<WebSocket | null>(null)
 
     useEffect(() => {
@@ -32,6 +34,7 @@ export function useLiveGameConnection() {
                 setFen(message.fen)
                 setTurn(message.turn)
                 setSvg(message.svg)
+                setViewerCount(message.viewerCount)
 
                 if (message.type === 'move' && message.move) {
                     setLastMove(message.move)
@@ -54,5 +57,5 @@ export function useLiveGameConnection() {
         }
     }, [])
 
-    return { fen, lastMove, turn, svg, isConnected }
+    return { fen, lastMove, turn, svg, isConnected, viewerCount }
 }

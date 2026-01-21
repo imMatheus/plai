@@ -1,7 +1,7 @@
 import { useLiveGameConnection } from './useLiveGameConnection'
 
 export function ExampleCounter() {
-    const { fen, lastMove, turn, svg, isConnected } = useLiveGameConnection()
+    const { fen, lastMove, turn, svg, isConnected, viewerCount } = useLiveGameConnection()
 
     console.log({ fen, lastMove, turn, });
 
@@ -29,6 +29,7 @@ export function ExampleCounter() {
 
             <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
                 <div><strong>Turn:</strong> {turn}</div>
+                <div><strong>Viewer Count:</strong> {viewerCount}</div>
                 {lastMove && <div><strong>Last Move:</strong> {lastMove}</div>}
             </div>
 
