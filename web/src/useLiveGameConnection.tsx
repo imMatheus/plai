@@ -35,6 +35,12 @@ export function useLiveGameConnection() {
 
         ws.current.onmessage = (event) => {
             const message: GameMessage = JSON.parse(event.data)
+            console.log('Received message:', message.type, {
+                fen: message.fen,
+                svgLength: message.svg?.length,
+                whitePlayer: message.whitePlayer,
+                blackPlayer: message.blackPlayer
+            })
 
             if (message.type === 'game_state' || message.type === 'move') {
                 setFen(message.fen)

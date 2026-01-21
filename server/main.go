@@ -111,7 +111,7 @@ func (h *Hub) run() {
 			}
 			svg := h.generateSVG()
 			viewerCount := len(h.clients)
-			client.send <- Message{
+			msg := Message{
 				Type:          "game_state",
 				FEN:           h.currentGame.FEN(),
 				Turn:          turn,
@@ -121,6 +121,9 @@ func (h *Hub) run() {
 				BlackPlayer:   string(h.blackPlayer),
 				CurrentPlayer: currentPlayer,
 			}
+			log.Printf("Sending initial game state to new client: FEN=%s, White=%s, Black=%s, SVG length=%d",
+				msg.FEN, msg.WhitePlayer, msg.BlackPlayer, len(msg.SVG))
+			client.send <- msg
 			h.mu.RUnlock()
 		case client := <-h.unregister:
 			if _, ok := h.clients[client]; ok {
@@ -335,8 +338,8 @@ func (h *Hub) validateAndParseMove(moveStr string) (*chess.Move, error) {
 }
 
 func (h *Hub) playMove() {
+	// Lock briefly to read game state
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	// Check if game is over
 	if h.currentGame.Outcome() != chess.NoOutcome {
@@ -351,12 +354,14 @@ func (h *Hub) playMove() {
 			h.blackPlayer = PlayerChatGPT
 		}
 		log.Printf("Starting new game: White=%s, Black=%s", h.whitePlayer, h.blackPlayer)
+		h.mu.Unlock()
 		return
 	}
 
 	// Get legal moves
 	validMoves := h.currentGame.ValidMoves()
 	if len(validMoves) == 0 {
+		h.mu.Unlock()
 		return
 	}
 
@@ -369,12 +374,16 @@ func (h *Hub) playMove() {
 	}
 
 	fen := h.currentGame.FEN()
+
+	// Unlock before making API calls!
+	h.mu.Unlock()
+
 	log.Printf("%s's turn to move (FEN: %s)", currentPlayer, fen)
 
 	var move *chess.Move
 	var moveErr error
 
-	// Try up to 3 times to get a valid move from AI
+	// Try up to 3 times to get a valid move from AI (no lock held during API calls)
 	for attempt := 1; attempt <= 3; attempt++ {
 		moveStr, err := h.getAIMove(currentPlayer, fen, validMoves)
 		if err != nil {
@@ -385,7 +394,11 @@ func (h *Hub) playMove() {
 
 		log.Printf("Attempt %d: %s suggested move: %s", attempt, currentPlayer, moveStr)
 
+		// Lock briefly to validate move
+		h.mu.Lock()
 		move, moveErr = h.validateAndParseMove(moveStr)
+		h.mu.Unlock()
+
 		if moveErr == nil {
 			break
 		}
@@ -399,10 +412,12 @@ func (h *Hub) playMove() {
 		move = validMoves[rand.Intn(len(validMoves))]
 	}
 
-	// Make the move
+	// Lock to make the move
+	h.mu.Lock()
 	err := h.currentGame.Move(move)
 	if err != nil {
 		log.Printf("Error making move: %v", err)
+		h.mu.Unlock()
 		return
 	}
 
@@ -414,24 +429,32 @@ func (h *Hub) playMove() {
 	}
 
 	svg := h.generateSVG()
+	currentFEN := h.currentGame.FEN()
+	moveStr := move.String()
+	viewerCount := len(h.clients)
+	whitePlayer := string(h.whitePlayer)
+	blackPlayer := string(h.blackPlayer)
+
+	// Unlock before broadcasting
+	h.mu.Unlock()
 
 	// Broadcast move to all clients
 	h.broadcast <- Message{
 		Type:          "move",
-		FEN:           h.currentGame.FEN(),
-		Move:          move.String(),
+		FEN:           currentFEN,
+		Move:          moveStr,
 		Turn:          turn,
 		SVG:           svg,
-		ViewerCount:   len(h.clients),
-		WhitePlayer:   string(h.whitePlayer),
-		BlackPlayer:   string(h.blackPlayer),
+		ViewerCount:   viewerCount,
+		WhitePlayer:   whitePlayer,
+		BlackPlayer:   blackPlayer,
 		CurrentPlayer: nextPlayer,
 	}
 
-	log.Printf("Move played: %s, New FEN: %s, Next turn: %s (%s)", move.String(), h.currentGame.FEN(), turn, nextPlayer)
+	log.Printf("Move played: %s, New FEN: %s, Next turn: %s (%s)", moveStr, currentFEN, turn, nextPlayer)
 }
 
-const MOVE_INTERVAL = 4_000 * time.Millisecond // 0.4 seconds
+const MOVE_INTERVAL = 2_000 * time.Millisecond // 2 second
 
 func (h *Hub) gameLoop() {
 	ticker := time.NewTicker(MOVE_INTERVAL)
@@ -444,14 +467,19 @@ func (h *Hub) gameLoop() {
 
 func (c *Client) readPump() {
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("readPump panic recovered: %v", r)
+		}
 		c.hub.unregister <- c
 		c.conn.Close()
+		log.Println("readPump exiting")
 	}()
 
 	for {
 		var msg Message
 		err := c.conn.ReadJSON(&msg)
 		if err != nil {
+			log.Printf("readPump error: %v", err)
 			break
 		}
 		// Client messages are ignored for now since game plays automatically
@@ -459,32 +487,49 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) writePump() {
-	defer c.conn.Close()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("writePump panic recovered: %v", r)
+		}
+		c.conn.Close()
+	}()
 
 	for message := range c.send {
+		log.Printf("Sending message to client: type=%s, FEN=%s", message.Type, message.FEN)
 		err := c.conn.WriteJSON(message)
 		if err != nil {
+			log.Printf("Error sending message to client: %v", err)
 			break
 		}
+		log.Printf("Message sent successfully: type=%s", message.Type)
 	}
+	log.Println("writePump exiting")
 }
 
 func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
+	log.Printf("WebSocket connection attempt from %s", r.RemoteAddr)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Println(err)
+		log.Printf("WebSocket upgrade error: %v", err)
 		return
 	}
+
+	log.Printf("WebSocket connection established from %s", r.RemoteAddr)
 
 	client := &Client{
 		hub:  hub,
 		conn: conn,
 		send: make(chan Message, 256),
 	}
-	client.hub.register <- client
 
+	// Start goroutines first
 	go client.writePump()
 	go client.readPump()
+
+	// Then register the client (which triggers sending initial state)
+	client.hub.register <- client
+
+	log.Printf("Client registered from %s", r.RemoteAddr)
 }
 
 func main() {
