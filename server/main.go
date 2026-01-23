@@ -338,13 +338,10 @@ func (c *Client) writePump() {
 	}()
 
 	for message := range c.send {
-		log.Printf("Sending message to client: type=%s, FEN=%s", message.Type, message.FEN)
 		err := c.conn.WriteJSON(message)
 		if err != nil {
-			log.Printf("Error sending message to client: %v", err)
 			break
 		}
-		log.Printf("Message sent successfully: type=%s", message.Type)
 	}
 	log.Println("writePump exiting")
 }
