@@ -1,6 +1,6 @@
 import { useLiveGameConnection } from './useLiveGameConnection'
 
-export function ExampleCounter() {
+export function LiveGameBoard() {
     const { fen, lastMove, turn, svg, isConnected, viewerCount, whitePlayer, blackPlayer, currentPlayer } = useLiveGameConnection()
 
     console.log({ fen, lastMove, turn, svg: svg.length, whitePlayer, blackPlayer, viewerCount });

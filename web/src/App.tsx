@@ -1,4 +1,4 @@
-import { ExampleCounter } from './ExampleCounter'
+import { LiveGameBoard } from './LiveGameBoard'
 import { GamesList } from './GamesList'
 
 function App() {
@@ -23,7 +23,7 @@ function App() {
         </h1>
       </div>
 
-      <ExampleCounter />
+      <LiveGameBoard />
 
       <div style={{
         borderTop: '2px solid #e5e7eb',
