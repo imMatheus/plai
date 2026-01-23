@@ -257,6 +257,11 @@ func (h *Hub) playMove() {
 
 	// Lock to make the move
 	h.mu.Lock()
+
+	// Get SAN notation before making the move (for cleaner logging)
+	encoder := chess.AlgebraicNotation{}
+	moveSAN := encoder.Encode(h.currentGame.Position(), move)
+
 	err := h.currentGame.Move(move)
 	if err != nil {
 		log.Printf("Error making move: %v", err)
@@ -273,7 +278,6 @@ func (h *Hub) playMove() {
 
 	svg := h.generateSVG()
 	currentFEN := h.currentGame.FEN()
-	moveStr := move.String()
 	viewerCount := len(h.clients)
 	whitePlayer := string(h.whitePlayer)
 	blackPlayer := string(h.blackPlayer)
@@ -281,11 +285,11 @@ func (h *Hub) playMove() {
 	// Unlock before broadcasting
 	h.mu.Unlock()
 
-	// Broadcast move to all clients
+	// Broadcast move to all clients (use SAN notation for consistency)
 	h.broadcast <- Message{
 		Type:          "move",
 		FEN:           currentFEN,
-		Move:          moveStr,
+		Move:          moveSAN,
 		Turn:          turn,
 		SVG:           svg,
 		ViewerCount:   viewerCount,
@@ -294,7 +298,7 @@ func (h *Hub) playMove() {
 		CurrentPlayer: nextPlayer,
 	}
 
-	log.Printf("Move played: %s, New FEN: %s, Next turn: %s (%s)", moveStr, currentFEN, turn, nextPlayer)
+	log.Printf("Move played: %s, New FEN: %s, Next turn: %s (%s)", moveSAN, currentFEN, turn, nextPlayer)
 }
 
 const MOVE_INTERVAL = 2_000 * time.Millisecond // 2 second
