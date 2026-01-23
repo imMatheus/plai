@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"image/color"
 	"log"
@@ -42,9 +43,11 @@ type Hub struct {
 	register    chan *Client
 	unregister  chan *Client
 	currentGame *chess.Game
+	gameStarted time.Time
 	whitePlayer AIPlayer
 	blackPlayer AIPlayer
 	aiConfig    AIConfig
+	db          *Database
 	mu          sync.RWMutex
 }
 
@@ -66,7 +69,7 @@ type Message struct {
 	CurrentPlayer string `json:"currentPlayer,omitempty"`
 }
 
-func newHub() *Hub {
+func newHub(db *Database) *Hub {
 	// Randomly assign who goes first
 	var whitePlayer, blackPlayer AIPlayer
 	if rand.Intn(2) == 0 {
@@ -85,8 +88,10 @@ func newHub() *Hub {
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
 		currentGame: chess.NewGame(),
+		gameStarted: time.Now(),
 		whitePlayer: whitePlayer,
 		blackPlayer: blackPlayer,
+		db:          db,
 		aiConfig: AIConfig{
 			openAIKey:    os.Getenv("OPENAI_API_KEY"),
 			anthropicKey: os.Getenv("ANTHROPIC_API_KEY"),
@@ -187,8 +192,19 @@ func (h *Hub) playMove() {
 	// Check if game is over
 	if h.currentGame.Outcome() != chess.NoOutcome {
 		log.Println("Game over:", h.currentGame.Outcome())
+
+		// Save game to database
+		if h.db != nil {
+			whitePlayer := string(h.whitePlayer)
+			blackPlayer := string(h.blackPlayer)
+			if err := h.db.SaveGame(whitePlayer, blackPlayer, h.currentGame, h.gameStarted); err != nil {
+				log.Printf("Failed to save game to database: %v", err)
+			}
+		}
+
 		// Start new game and randomly reassign players
 		h.currentGame = chess.NewGame()
+		h.gameStarted = time.Now()
 		if rand.Intn(2) == 0 {
 			h.whitePlayer = PlayerChatGPT
 			h.blackPlayer = PlayerClaude
@@ -382,12 +398,48 @@ func main() {
 		log.Println("No .env file found, using system environment variables")
 	}
 
-	hub := newHub()
+	// Get database URL from environment variable
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		// Default to local development database
+		databaseURL = "postgres://plai:plaidev@localhost:5432/plai?sslmode=disable"
+	}
+
+	// Connect to database
+	db, err := NewDatabase(databaseURL)
+	if err != nil {
+		log.Printf("Warning: Failed to connect to database: %v", err)
+		log.Println("Continuing without database support...")
+		db = nil
+	}
+	if db != nil {
+		defer db.Close()
+	}
+
+	hub := newHub(db)
 	go hub.run()
 	go hub.gameLoop() // Start the automatic game loop
 
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
+	})
+
+	http.HandleFunc("/api/games", func(w http.ResponseWriter, r *http.Request) {
+		if db == nil {
+			http.Error(w, "Database not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		games, err := db.GetAllGames()
+		if err != nil {
+			log.Printf("Error fetching games: %v", err)
+			http.Error(w, "Failed to fetch games", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		json.NewEncoder(w).Encode(games)
 	})
 
 	log.Println("Server starting on :8080")
